@@ -11,29 +11,36 @@ app.use(cors());
 app.use(bodyParser.json());
 
 const filePath = path.join(__dirname, 'data.json');
+const repFilePath = path.join(__dirname, 'dailyreportdata.json');
 
 // Helper function to read data from file
-const readData = () => {
+const readData = (filePath) => {
   const data = fs.readFileSync(filePath);
   return JSON.parse(data);
 };
 
 // Helper function to write data to file
-const writeData = (data) => {
+const writeData = (filePath, data) => {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 };
 
 // CRUD operations
 
-// Read
+// Read data from 'data.json'
 app.get('/data', (req, res) => {
-  const data = readData();
+  const data = readData(filePath);
   res.json(data);
 });
 
-// Create
+// Read data from 'dailyreportdata.json'
+app.get('/repdata', (req, res) => {
+  const data = readData(repFilePath);
+  res.json(data);
+});
+
+// Create a new entry in 'data.json'
 app.post('/data', (req, res) => {
-  const data = readData();
+  const data = readData(filePath);
   const newItem = req.body;
 
   // If there are already two records, delete them
@@ -43,32 +50,44 @@ app.post('/data', (req, res) => {
 
   // Add the new record
   data.push(newItem);
-  writeData(data);
+  writeData(filePath, data);
 
   res.status(201).json(newItem);
 });
 
-// Update
+// Create a new entry in 'dailyreportdata.json'
+app.post('/repdata', (req, res) => {
+  const data = readData(repFilePath);
+  const newItem = req.body;
+
+  // Add the new record
+  data.push(newItem);
+  writeData(repFilePath, data);
+
+  res.status(201).json(newItem);
+});
+
+// Update an entry in 'data.json'
 app.put('/data/:index', (req, res) => {
-  const data = readData();
+  const data = readData(filePath);
   const { index } = req.params;
   const itemIndex = data.findIndex(item => item.index === index);
 
   if (itemIndex !== -1) {
     data[itemIndex] = req.body;
-    writeData(data);
+    writeData(filePath, data);
     res.json(data[itemIndex]);
   } else {
     res.status(404).json({ message: 'Item not found' });
   }
 });
 
-// Delete
+// Delete an entry from 'data.json'
 app.delete('/data/:index', (req, res) => {
-  const data = readData();
+  const data = readData(filePath);
   const { index } = req.params;
   const newData = data.filter(item => item.index !== index);
-  writeData(newData);
+  writeData(filePath, newData);
   res.status(204).send();
 });
 
