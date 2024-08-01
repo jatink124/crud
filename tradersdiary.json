@@ -14,5 +14,21 @@
     "netPL": "70.19",
     "status": "In Profit",
     "index": 2
+  },
+  {
+    "tradeDay": "2023-04-03",
+    "numberOfTrades": "6",
+    "overallPL": "-1985",
+    "netPL": "2166",
+    "status": "In Loss",
+    "index": 3
+  },
+  {
+    "tradeDay": "2023-04-05",
+    "numberOfTrades": "12",
+    "overallPL": "-681.25",
+    "netPL": "-1010.13",
+    "status": "In Loss",
+    "index": 4
   }
 ]

@@ -13,7 +13,9 @@ app.use(bodyParser.json());
 const filePath = path.join(__dirname, 'data.json');
 const repFilePath = path.join(__dirname, 'dailyreportdata.json');
 const tradersdiaryPath = path.join(__dirname, 'tradersdiary.json');
-
+const predictionsRoutes = require('./predictionroutes'); // Import the routes
+// Use the predictions routes
+app.use('/api', predictionsRoutes); // Prefix routes with '/api'
 // Helper function to read data from file
 const readData = (filePath) => {
   const data = fs.readFileSync(filePath);
