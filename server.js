@@ -3,17 +3,19 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-
+const strategyRouter = require('./routes/strategy');
 const app = express();
 const PORT = 5000;
 
 app.use(cors());
 app.use(bodyParser.json());
 
+app.use('/api', strategyRouter);
 const filePath = path.join(__dirname, 'data.json');
 const repFilePath = path.join(__dirname, 'dailyreportdata.json');
 const tradersdiaryPath = path.join(__dirname, 'tradersdiary.json');
 const predictionsRoutes = require('./predictionroutes'); // Import the routes
+
 // Use the predictions routes
 app.use('/api', predictionsRoutes); // Prefix routes with '/api'
 // Helper function to read data from file
