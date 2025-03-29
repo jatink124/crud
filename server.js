@@ -1,21 +1,49 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
-require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// MongoDB connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/webdev_contacts', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
+// 1. CORS Configuration - THIS IS THE CRITICAL FIX
+const allowedOrigins = ['http://localhost:5173', 'http://localhost:3000'];
 
-// Define Contact schema
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+  credentials: true
+};
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// Explicitly handle preflight requests
+app.options('*', cors(corsOptions));
+
+// Middleware
+app.use(express.json());
+
+// 2. MongoDB Connection
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('✅ MongoDB connected successfully'))
+  .catch(err => {
+    console.error('❌ MongoDB connection error:', err.message);
+    process.exit(1);
+  });
+  // Add this right after mongoose.connect()
+mongoose.connection.on('connected', () => {
+  console.log('Connected to DB:', mongoose.connection.db.databaseName);
+});
+
+// 3. Contact Schema
 const contactSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true },
@@ -23,59 +51,61 @@ const contactSchema = new mongoose.Schema({
   message: { type: String, required: true },
   date: { type: Date, default: Date.now },
   ip: String
-});
+},{ collection: 'portfolio' });
 
 const Contact = mongoose.model('Contact', contactSchema);
 
-// Middleware
-app.use(cors());
-app.use(bodyParser.json());
-
-// Contact form endpoint
+// 4. Routes
 app.post('/api/contact', async (req, res) => {
   try {
-    const { name, email, subject, message, date } = req.body;
+    const { name, email, subject, message } = req.body;
 
-    // Validate input
+    // Validation
     if (!name || !email || !subject || !message) {
-      return res.status(400).json({ error: 'All fields are required' });
+      return res.status(400).json({ 
+        success: false,
+        message: 'All fields are required' 
+      });
     }
 
-    // Create new contact document
-    const newContact = new Contact({
+    const newContact = await Contact.create({
       name,
       email,
       subject,
       message,
-      date: date || new Date(),
       ip: req.ip
     });
 
-    // Save to MongoDB
-    const savedContact = await newContact.save();
-
-    res.status(201).json({ 
-      message: 'Form submitted successfully',
-      submission: savedContact
+    res.status(201).json({
+      success: true,
+      data: newContact
     });
 
   } catch (error) {
-    console.error('Error processing contact form:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
   }
 });
 
-// GET endpoint to view submissions
 app.get('/api/contact', async (req, res) => {
   try {
     const contacts = await Contact.find().sort({ date: -1 });
-    res.json(contacts);
+    res.json({
+      success: true,
+      data: contacts
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Error retrieving submissions' });
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving contacts'
+    });
   }
 });
 
-// Start server
+// 5. Start Server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
