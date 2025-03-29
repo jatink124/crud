@@ -1,24 +1,38 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const fs = require('fs');
-const path = require('path');
+const mongoose = require('mongoose');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const DATA_FILE = path.join(__dirname, 'contactSubmissions.json');
 
-// Initialize data file if it doesn't exist
-if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify([], null, 2));
-}
+// MongoDB connection
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/webdev_contacts', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log('Connected to MongoDB'))
+.catch(err => console.error('MongoDB connection error:', err));
+
+// Define Contact schema
+const contactSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true },
+  subject: { type: String, required: true },
+  message: { type: String, required: true },
+  date: { type: Date, default: Date.now },
+  ip: String
+});
+
+const Contact = mongoose.model('Contact', contactSchema);
 
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
 
 // Contact form endpoint
-app.post('/api/contact', (req, res) => {
+app.post('/api/contact', async (req, res) => {
   try {
     const { name, email, subject, message, date } = req.body;
 
@@ -27,27 +41,22 @@ app.post('/api/contact', (req, res) => {
       return res.status(400).json({ error: 'All fields are required' });
     }
 
-    // Read existing data
-    const existingData = JSON.parse(fs.readFileSync(DATA_FILE));
-    
-    // Add new submission
-    const newSubmission = {
-      id: Date.now(), // Unique ID based on timestamp
+    // Create new contact document
+    const newContact = new Contact({
       name,
       email,
       subject,
       message,
-      date: date || new Date().toISOString(),
-      ip: req.ip // Optional: track IP address
-    };
+      date: date || new Date(),
+      ip: req.ip
+    });
 
-    // Save to JSON file
-    const updatedData = [...existingData, newSubmission];
-    fs.writeFileSync(DATA_FILE, JSON.stringify(updatedData, null, 2));
+    // Save to MongoDB
+    const savedContact = await newContact.save();
 
     res.status(201).json({ 
       message: 'Form submitted successfully',
-      submission: newSubmission
+      submission: savedContact
     });
 
   } catch (error) {
@@ -56,18 +65,17 @@ app.post('/api/contact', (req, res) => {
   }
 });
 
-// Optional: Add GET endpoint to view submissions
-app.get('/api/contact', (req, res) => {
+// GET endpoint to view submissions
+app.get('/api/contact', async (req, res) => {
   try {
-    const data = JSON.parse(fs.readFileSync(DATA_FILE));
-    res.json(data);
+    const contacts = await Contact.find().sort({ date: -1 });
+    res.json(contacts);
   } catch (error) {
-    res.status(500).json({ error: 'Error reading submissions' });
+    res.status(500).json({ error: 'Error retrieving submissions' });
   }
 });
 
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Submissions stored in: ${DATA_FILE}`);
 });
