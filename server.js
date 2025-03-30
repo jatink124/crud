@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const { router: adminRouter, verifyAdmin } = require('./admin-auth');
 
 // Initialize Express app
 const app = express();
@@ -15,8 +16,8 @@ const PORT = process.env.PORT || 5000;
 const allowedOrigins = [
   'http://localhost:5173', 
   'http://localhost:3000',
-  'https://your-production-domain.com' // Add your production domain
-];
+  process.env.FRONTEND_URL // Add production frontend URL
+].filter(Boolean); // Remove any undefined values
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -26,7 +27,7 @@ const corsOptions = {
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Origin not allowed by CORS'));
+      callback(new Error('Not allowed by CORS'));
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -132,9 +133,12 @@ const Contact = mongoose.model('Contact', contactSchema);
 // 4. API Routes
 // ======================
 
+// Admin routes
+app.use('/api/admin', adminRouter);
+
 /**
  * @route   POST /api/contact
- * @desc    Create a new contact message
+ * @desc    Create a new contact message (public)
  * @access  Public
  */
 app.post('/api/contact', async (req, res) => {
@@ -184,10 +188,10 @@ app.post('/api/contact', async (req, res) => {
 
 /**
  * @route   GET /api/contact
- * @desc    Get all contact messages
- * @access  Public
+ * @desc    Get all contact messages (protected)
+ * @access  Private (Admin only)
  */
-app.get('/api/contact', async (req, res) => {
+app.get('/api/contact', verifyAdmin, async (req, res) => {
   try {
     // Add pagination and filtering in a real application
     const contacts = await Contact.find()
@@ -211,10 +215,10 @@ app.get('/api/contact', async (req, res) => {
 
 /**
  * @route   PUT /api/contact/:id
- * @desc    Update a contact message
- * @access  Public (should be protected in production)
+ * @desc    Update a contact message (protected)
+ * @access  Private (Admin only)
  */
-app.put('/api/contact/:id', async (req, res) => {
+app.put('/api/contact/:id', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, email, subject, message } = req.body;
@@ -266,10 +270,10 @@ app.put('/api/contact/:id', async (req, res) => {
 
 /**
  * @route   DELETE /api/contact/:id
- * @desc    Delete a contact message
- * @access  Public (should be protected in production)
+ * @desc    Delete a contact message (protected)
+ * @access  Private (Admin only)
  */
-app.delete('/api/contact/:id', async (req, res) => {
+app.delete('/api/contact/:id', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -320,6 +324,14 @@ app.use((req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('Global error handler:', err);
+  
+  // Handle CORS errors
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      success: false,
+      message: 'Cross-origin request denied'
+    });
+  }
   
   res.status(500).json({
     success: false,
