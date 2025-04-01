@@ -17,7 +17,7 @@ const allowedOrigins = [
   'http://localhost:5173', 
   'http://localhost:3000',
   'https://webdevgurus.online',
-  'https://ubiquitous-yodel-v6x5p9rg9x7f4g-5173.app.github.dev',
+  'https://jubilant-guacamole-jjxgrv7467xhj774-5173.app.github.dev',
   process.env.FRONTEND_URL // Add production frontend URL
 ].filter(Boolean); // Remove any undefined values
 
