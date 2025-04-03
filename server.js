@@ -13,14 +13,8 @@ const allowedOrigins = [
   'http://localhost:5173', 
   'http://localhost:3000',
   'https://webdevgurus.online',
-<<<<<<< HEAD
   process.env.FRONTEND_URL
 ].filter(Boolean);
-=======
-  'https://jubilant-guacamole-jjxgrv7467xhj774-5173.app.github.dev',
-  process.env.FRONTEND_URL // Add production frontend URL
-].filter(Boolean); // Remove any undefined values
->>>>>>> 1a404f44c35240be55d999bd23192ad63017d4c3
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -142,39 +136,5 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
-<<<<<<< HEAD
 // Server Initialization
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-=======
-// ======================
-// 6. Server Initialization
-// ======================
-
-const server = app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
-  server.close(() => {
-    console.log('Server closed');
-    mongoose.connection.close(false, () => {
-      console.log('MongoDB connection closed');
-      process.exit(0);
-    });
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received. Shutting down gracefully...');
-  server.close(() => {
-    console.log('Server closed');
-    mongoose.connection.close(false, () => {
-      console.log('MongoDB connection closed');
-      process.exit(0);
-    });
-  });
-});
->>>>>>> 1a404f44c35240be55d999bd23192ad63017d4c3
