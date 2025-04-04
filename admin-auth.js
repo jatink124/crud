@@ -1,66 +1,79 @@
-require('dotenv').config();
+// admin-auth.js
 const express = require('express');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const router = express.Router();
+const mongoose = require('mongoose');
 
-// Mock admin user (in production, store in DB)
-const ADMIN_USER = {
-  email: process.env.ADMIN_EMAIL || 'admin@example.com',
-  password: process.env.ADMIN_PASSWORD ? bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10) : bcrypt.hashSync('admin123', 10)
+// Admin model
+const Admin = mongoose.model('Admin', new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true }
+}));
+
+// Middleware to verify admin token
+// Enhanced verifyAdmin middleware
+const verifyAdmin = (req, res, next) => {
+  // Check for token in both cookies and Authorization header
+  const token = req.cookies?.adminToken || 
+                req.headers['authorization']?.split(' ')[1];
+  
+  if (!token) {
+    console.log('No token provided in request');
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication token required'
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.adminId = decoded.id;
+    next();
+  } catch (error) {
+    console.error('Token verification failed:', error.message);
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid or expired token',
+      action: 'reauthenticate'
+    });
+  }
 };
 
-// Admin login endpoint
+// Admin login
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { username, password } = req.body;
+    const admin = await Admin.findOne({ username });
 
-    if (email !== ADMIN_USER.email) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    if (!admin || !bcrypt.compareSync(password, admin.password)) {
+      return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    const isMatch = await bcrypt.compare(password, ADMIN_USER.password);
-    if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign(
-      { email: ADMIN_USER.email, role: 'admin' },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '8h' }
-    );
-
-    res.json({ 
-      success: true, 
-      token,
-      user: { email: ADMIN_USER.email }
+    const token = jwt.sign({ id: admin._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    
+    res.cookie('adminToken', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 3600000 // 1 hour
     });
 
+    res.json({ success: true, message: 'Logged in successfully' });
   } catch (error) {
-    console.error('Admin login error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    res.status(500).json({ success: false, error: 'Login failed' });
   }
 });
 
-// Admin verification middleware
-const verifyAdmin = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  
-  if (!token) {
-    return res.status(401).json({ success: false, message: 'No token provided' });
-  }
+// Admin logout
+router.post('/logout', (req, res) => {
+  res.clearCookie('adminToken');
+  res.json({ success: true, message: 'Logged out successfully' });
+});
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-    if (decoded.role !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Unauthorized' });
-    }
-    req.user = decoded;
-    next();
-  } catch (error) {
-    console.error('Token verification error:', error);
-    res.status(401).json({ success: false, message: 'Invalid token' });
-  }
-};
+// Check admin auth status
+router.get('/check-auth', verifyAdmin, (req, res) => {
+  res.json({ success: true, isAuthenticated: true });
+});
 
 module.exports = { router, verifyAdmin };
