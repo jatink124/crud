@@ -13,6 +13,7 @@ app.use(cors({
   origin: [
     'http://localhost:3000',
     'http://localhost:5173',
+    'https://webdevgurus.online',
     process.env.FRONTEND_URL
   ].filter(Boolean),
   credentials: true,  // This is crucial
