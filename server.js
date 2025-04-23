@@ -2,13 +2,52 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const { router: adminRouter, verifyAdmin } = require('./admin-auth');
+const nodemailer = require('nodemailer');
+const http = require('http');
+const { Server } = require('socket.io');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const timeout = require('connect-timeout');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Create HTTP server for Socket.io
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'https://webdevgurus.online',
+      process.env.FRONTEND_URL
+    ].filter(Boolean),
+    methods: ['GET', 'POST']
+  }
+});
+
 // Middleware
-// CORS Configuration
+app.use(compression());
+app.use(timeout('15s'));
+app.use((req, res, next) => {
+  if (!req.timedout) next();
+});
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100
+});
+
+// Response time logger
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`${req.method} ${req.url} - ${duration}ms`);
+  });
+  next();
+});
+
 app.use(cors({
   origin: [
     'http://localhost:3000',
@@ -16,24 +55,41 @@ app.use(cors({
     'https://webdevgurus.online',
     process.env.FRONTEND_URL
   ].filter(Boolean),
-  credentials: true,  // This is crucial
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Handle preflight requests
-app.options('*', cors());  // Enable preflight for all routes
-app.use(express.json());
+app.options('*', cors());
+app.use(express.json({ limit: '10kb' }));
 
-// Database connection
+// Database connection with pooling
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
-  useUnifiedTopology: true
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,
+  maxPoolSize: 10,
+  socketTimeoutMS: 45000
 })
 .then(() => console.log('MongoDB connected successfully'))
 .catch(err => console.error('MongoDB connection error:', err));
 
-// Portfolio Schema and Model
+// Email transporter configuration
+const transporter = nodemailer.createTransport({
+  service: process.env.EMAIL_SERVICE || 'gmail',
+  auth: {
+    user: process.env.EMAIL_USERNAME,
+    pass: process.env.EMAIL_PASSWORD
+  }
+});
+
+// Admin credentials
+const ADMIN_CREDENTIALS = {
+  username: process.env.ADMIN_USERNAME || 'admin',
+  password: process.env.ADMIN_PASSWORD || 'admin123'
+};
+
+// Schemas and Models
 const portfolioSchema = new mongoose.Schema({
   name: { type: String, required: [true, 'Name is required'] },
   email: { 
@@ -47,21 +103,128 @@ const portfolioSchema = new mongoose.Schema({
   ip: { type: String }
 }, { collection: 'portfolio' });
 
+const chatSchema = new mongoose.Schema({
+  sender: { type: String, required: true },
+  email: { type: String },
+  message: { type: String, required: true },
+  isAdmin: { type: Boolean, default: false },
+  timestamp: { type: Date, default: Date.now },
+  read: { type: Boolean, default: false }
+}, { collection: 'chat_messages' });
+
 const Portfolio = mongoose.model('Portfolio', portfolioSchema);
+const ChatMessage = mongoose.model('ChatMessage', chatSchema);
 
-// Public Portfolio Submission Endpoint (No JWT)
-app.post('/api/contacts', async (req, res) => {
+// Socket.io
+io.on('connection', (socket) => {
+  console.log('New client connected');
+
+  socket.on('new_message', async (data) => {
+    try {
+      const message = await ChatMessage.create({
+        sender: data.sender,
+        email: data.email,
+        message: data.message,
+        isAdmin: data.isAdmin || false
+      });
+
+      io.emit('message_received', message);
+
+      if (!data.isAdmin) {
+        const mailOptions = {
+          from: `"Chat Notification" <${process.env.EMAIL_USERNAME}>`,
+          to: process.env.NOTIFICATION_EMAIL || 'kaushaljatin48@gmail.com',
+          subject: `New Chat Message from ${data.sender}`,
+          html: `...` // Your email template
+        };
+
+        transporter.sendMail(mailOptions)
+          .then(info => console.log('Email sent:', info.messageId))
+          .catch(err => console.error('Email error:', err));
+      }
+    } catch (error) {
+      console.error('Error saving message:', error);
+    }
+  });
+
+  socket.on('mark_as_read', async (messageIds) => {
+    try {
+      await ChatMessage.updateMany(
+        { _id: { $in: messageIds } },
+        { $set: { read: true } }
+      );
+    } catch (error) {
+      console.error('Error marking messages as read:', error);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected');
+  });
+});
+
+// Routes
+app.post('/api/admin/login', limiter, async (req, res) => {
+  req.on('timeout', () => {
+    res.status(503).json({ 
+      success: false, 
+      error: 'Service timeout' 
+    });
+  });
+
   try {
-    const ip = req.ip || 
-               req.headers['x-forwarded-for']?.split(',')[0].trim() || 
-               req.socket?.remoteAddress;
+    const { username, password } = req.body;
 
-    const portfolioItem = await Portfolio.create({
-      ...req.body,
-      ip: ip
+    if (!username || !password) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Username and password are required' 
+      });
+    }
+
+    const usernameMatch = username === ADMIN_CREDENTIALS.username;
+    const passwordMatch = password === ADMIN_CREDENTIALS.password;
+    
+    if (!usernameMatch || !passwordMatch) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Invalid credentials' 
+      });
+    }
+
+    res.json({ 
+      success: true,
+      message: 'Login successful',
+      admin: {
+        username: ADMIN_CREDENTIALS.username
+      }
     });
 
-    console.log('✅ Portfolio item created:', portfolioItem);
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error' 
+    });
+  }
+});
+
+app.post('/api/contacts', async (req, res) => {
+  try {
+    const ip = req.ip || req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket?.remoteAddress;
+    const portfolioItem = await Portfolio.create({ ...req.body, ip });
+
+    const mailOptions = {
+      from: `"Portfolio Contact" <${process.env.EMAIL_USERNAME}>`,
+      to: process.env.NOTIFICATION_EMAIL || 'kaushaljatin48@gmail.com',
+      subject: `New Contact: ${req.body.subject}`,
+      html: `...` // Your email template
+    };
+
+    transporter.sendMail(mailOptions)
+      .then(info => console.log('Email sent:', info.messageId))
+      .catch(emailErr => console.error('Email error:', emailErr));
+
     res.status(201).json({ 
       success: true, 
       data: portfolioItem,
@@ -69,7 +232,7 @@ app.post('/api/contacts', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Submission error:', error);
+    console.error('Submission error:', error);
     
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
@@ -87,151 +250,33 @@ app.post('/api/contacts', async (req, res) => {
   }
 });
 
-// Protected Admin Routes (Keep JWT for these)
-// Protected Admin Routes
-app.use('/api/admin', adminRouter);
-
-// Get all contacts (protected)
-// Protected route with better error handling
-app.get('/api/contacts', async (req, res) => {
+app.get('/api/chat/messages', async (req, res) => {
   try {
-    const contacts = await Portfolio.find().sort({ date: -1 });
-    res.json({
-      success: true,
-      data: contacts
-    });
+    const messages = await ChatMessage.find().sort({ timestamp: -1 }).limit(50);
+    res.json({ success: true, data: messages.reverse() });
   } catch (error) {
-    console.error('Database error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch contacts'
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch messages' });
   }
 });
 
-// Get single contact (protected)
-app.get('/api/contacts/:id', verifyAdmin, async (req, res) => {
+app.put('/api/chat/messages/mark-read', async (req, res) => {
   try {
-    const contact = await Portfolio.findById(req.params.id);
-    
-    if (!contact) {
-      return res.status(404).json({
-        success: false,
-        error: 'Contact not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: contact
-    });
-
+    await ChatMessage.updateMany({ read: false }, { $set: { read: true } });
+    res.json({ success: true });
   } catch (error) {
-    console.error('Failed to fetch contact:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch contact',
-      message: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to mark messages as read' });
   }
 });
 
-// Delete contact (protected)
-app.delete('/api/contacts/:id', async (req, res) => {
-  try {
-    const deletedContact = await Portfolio.findByIdAndDelete(req.params.id);
-    
-    if (!deletedContact) {
-      return res.status(404).json({
-        success: false,
-        error: 'Contact not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Contact deleted successfully',
-      data: deletedContact
-    });
-
-  } catch (error) {
-    console.error('Failed to delete contact:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to delete contact',
-      message: error.message
-    });
-  }
-});
-
-// Update contact (protected)
-app.put('/api/contacts/:id', verifyAdmin, async (req, res) => {
-  try {
-    const updatedContact = await Portfolio.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      {
-        new: true,
-        runValidators: true
-      }
-    );
-
-    if (!updatedContact) {
-      return res.status(404).json({
-        success: false,
-        error: 'Contact not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Contact updated successfully',
-      data: updatedContact
-    });
-
-  } catch (error) {
-    console.error('Failed to update contact:', error);
-    
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: Object.values(error.errors).map(err => err.message)
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update contact',
-      message: error.message
-    });
-  }
-});
-
-// Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Server is running', 
+  res.json({
+    status: 'healthy',
     timestamp: new Date(),
-    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'
+    uptime: process.uptime(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
   });
 });
 
-// Error handlers
-app.use((req, res) => {
-  res.status(404).json({ success: false, error: 'Endpoint not found' });
-});
-
-app.use((err, req, res, next) => {
-  console.error('Server error:', err.stack);
-  res.status(500).json({ 
-    success: false, 
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
-});
-
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

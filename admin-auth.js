@@ -1,79 +1,151 @@
-// admin-auth.js
 const express = require('express');
+const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const router = express.Router();
 const mongoose = require('mongoose');
 
-// Admin model
-const Admin = mongoose.model('Admin', new mongoose.Schema({
+// Admin Schema and Model
+const adminSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
-  password: { type: String, required: true }
-}));
+  password: { type: String, required: true },
+  lastLogin: { type: Date }
+}, { collection: 'admin_users' });
+
+const Admin = mongoose.model('Admin', adminSchema);
 
 // Middleware to verify admin token
-// Enhanced verifyAdmin middleware
 const verifyAdmin = (req, res, next) => {
-  // Check for token in both cookies and Authorization header
-  const token = req.cookies?.adminToken || 
-                req.headers['authorization']?.split(' ')[1];
+  const token = req.headers['authorization']?.split(' ')[1];
   
   if (!token) {
-    console.log('No token provided in request');
-    return res.status(401).json({
-      success: false,
-      error: 'Authentication token required'
-    });
+    return res.status(403).json({ success: false, error: 'No token provided' });
   }
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).json({ success: false, error: 'Failed to authenticate token' });
+    }
+    
     req.adminId = decoded.id;
     next();
-  } catch (error) {
-    console.error('Token verification failed:', error.message);
-    return res.status(401).json({
-      success: false,
-      error: 'Invalid or expired token',
-      action: 'reauthenticate'
-    });
-  }
+  });
 };
 
-// Admin login
+// Admin Login Route
 router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
+    
+    // Find admin by username
     const admin = await Admin.findOne({ username });
-
-    if (!admin || !bcrypt.compareSync(password, admin.password)) {
+    if (!admin) {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
-
-    const token = jwt.sign({ id: admin._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
     
-    res.cookie('adminToken', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 3600000 // 1 hour
+    // Check password
+    const isMatch = await bcrypt.compare(password, admin.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, error: 'Invalid credentials' });
+    }
+    
+    // Update last login
+    admin.lastLogin = new Date();
+    await admin.save();
+    
+    // Create token
+    const token = jwt.sign(
+      { id: admin._id, username: admin.username },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+    
+    res.json({ 
+      success: true, 
+      token,
+      admin: {
+        id: admin._id,
+        username: admin.username,
+        lastLogin: admin.lastLogin
+      }
     });
-
-    res.json({ success: true, message: 'Logged in successfully' });
+    
   } catch (error) {
+    console.error('Admin login error:', error);
     res.status(500).json({ success: false, error: 'Login failed' });
   }
 });
 
-// Admin logout
-router.post('/logout', (req, res) => {
-  res.clearCookie('adminToken');
-  res.json({ success: true, message: 'Logged out successfully' });
+// Admin Profile Route (protected)
+router.get('/profile', verifyAdmin, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.adminId).select('-password');
+    if (!admin) {
+      return res.status(404).json({ success: false, error: 'Admin not found' });
+    }
+    res.json({ success: true, admin });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch profile' });
+  }
 });
 
-// Check admin auth status
-router.get('/check-auth', verifyAdmin, (req, res) => {
-  res.json({ success: true, isAuthenticated: true });
+// Admin Contacts Route (get all contacts)
+router.get('/contacts', verifyAdmin, async (req, res) => {
+  try {
+    const contacts = await mongoose.model('Portfolio').find().sort({ date: -1 });
+    res.json({ success: true, data: contacts });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch contacts' });
+  }
 });
 
-module.exports = { router, verifyAdmin };
+// Admin Chat Statistics
+router.get('/chat/stats', verifyAdmin, async (req, res) => {
+  try {
+    const totalMessages = await mongoose.model('ChatMessage').countDocuments();
+    const unreadMessages = await mongoose.model('ChatMessage').countDocuments({ read: false, isAdmin: false });
+    const recentMessages = await mongoose.model('ChatMessage').find()
+      .sort({ timestamp: -1 })
+      .limit(5);
+    
+    res.json({
+      success: true,
+      stats: {
+        totalMessages,
+        unreadMessages,
+        recentMessages
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch chat stats' });
+  }
+});
+
+// Initial admin setup route (remove after first use)
+router.post('/setup', async (req, res) => {
+  try {
+    // Check if any admin exists
+    const adminExists = await Admin.exists({});
+    if (adminExists) {
+      return res.status(400).json({ success: false, error: 'Admin already exists' });
+    }
+
+    const { username, password } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    const admin = new Admin({
+      username,
+      password: hashedPassword,
+      lastLogin: new Date()
+    });
+
+    await admin.save();
+    res.json({ success: true, message: 'Admin created successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Setup failed' });
+  }
+});
+
+module.exports = {
+  router,
+  verifyAdmin
+};
