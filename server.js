@@ -209,6 +209,26 @@ app.post('/api/admin/login', limiter, async (req, res) => {
   }
 });
 
+app.get('/api/contacts', async (req, res) => {
+  try {
+    // Fetch all contacts sorted by date (newest first)
+    const contacts = await Portfolio.find().sort({ date: -1 });
+    
+    res.json({ 
+      success: true, 
+      data: contacts,
+      count: contacts.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching contacts:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch contacts' 
+    });
+  }
+});
+
 app.post('/api/contacts', async (req, res) => {
   try {
     const ip = req.ip || req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket?.remoteAddress;
